@@ -745,6 +745,107 @@ mod multipart_tests {
     }
 
     #[tokio::test]
+    async fn multipart_with_nested_fields_deserializes_into_structs() {
+        #[derive(Deserialize)]
+        struct Relation {
+            entity_type: String,
+            entity_id: String,
+        }
+        #[derive(Deserialize)]
+        struct UploadDocuments {
+            origin: Relation,
+            links: Vec<Relation>,
+            files: Vec<UploadedFile>,
+        }
+
+        let cfg = InertiaConfig::new().version(|| "v1".into());
+        let app = Router::new()
+            .route(
+                "/documents",
+                post(
+                    |i: Inertia, InertiaForm(form): InertiaForm<UploadDocuments>| async move {
+                        i.render(
+                            "documents/created",
+                            json!({
+                                "origin": [form.origin.entity_type, form.origin.entity_id],
+                                "links": form.links.into_iter().map(|link| [link.entity_type, link.entity_id]).collect::<Vec<_>>(),
+                                "filenames": form.files.into_iter().map(|file| file.filename).collect::<Vec<_>>(),
+                            }),
+                        )
+                    },
+                ),
+            )
+            .layer(InertiaLayer::new(cfg));
+
+        let boundary = "veer-test-nested";
+        let body = multipart_body(
+            boundary,
+            &[
+                Part::Text {
+                    name: "origin[entity_type]",
+                    value: "estate",
+                },
+                Part::Text {
+                    name: "origin[entity_id]",
+                    value: "1",
+                },
+                Part::Text {
+                    name: "links[1][entity_type]",
+                    value: "lead",
+                },
+                Part::Text {
+                    name: "links[1][entity_id]",
+                    value: "3",
+                },
+                Part::Text {
+                    name: "links[0][entity_type]",
+                    value: "contact",
+                },
+                Part::Text {
+                    name: "links[0][entity_id]",
+                    value: "2",
+                },
+                Part::File {
+                    name: "files[]",
+                    filename: "first.pdf",
+                    content_type: "application/pdf",
+                    bytes: b"first",
+                },
+                Part::File {
+                    name: "files[]",
+                    filename: "second.pdf",
+                    content_type: "application/pdf",
+                    bytes: b"second",
+                },
+            ],
+        );
+        let request = http::Request::builder()
+            .method("POST")
+            .uri("/documents")
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .header("x-inertia", "true")
+            .header("x-inertia-version", "v1")
+            .body(axum::body::Body::from(body))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), 200);
+        let page = body_json(response).await;
+        assert_eq!(page["props"]["origin"], json!(["estate", "1"]));
+        assert_eq!(
+            page["props"]["links"],
+            json!([["contact", "2"], ["lead", "3"]])
+        );
+        assert_eq!(
+            page["props"]["filenames"],
+            json!(["first.pdf", "second.pdf"])
+        );
+    }
+
+    #[tokio::test]
     async fn multipart_text_only_still_works() {
         // A multipart submission with no file fields should still deserialize
         // text fields correctly.

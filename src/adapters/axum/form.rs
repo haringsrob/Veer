@@ -129,37 +129,68 @@ fn insert_multipart_value(
     field_name: &str,
     value: serde_json::Value,
 ) {
-    let Some((name, index)) = multipart_array_field(field_name) else {
+    let Some((name, path)) = multipart_field_path(field_name) else {
         map.insert(field_name.to_string(), value);
         return;
     };
-
-    let values = map
+    let slot = map
         .entry(name.to_string())
-        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
-    let serde_json::Value::Array(values) = values else {
+        .or_insert(serde_json::Value::Null);
+    insert_at_path(slot, &path, value);
+}
+
+/// Places `value` at `path` below `slot`, creating arrays for numeric or empty
+/// (`[]`, append) segments and objects for named ones. A segment that conflicts
+/// with an existing value of another shape is dropped.
+#[cfg(feature = "multipart")]
+fn insert_at_path(slot: &mut serde_json::Value, path: &[&str], value: serde_json::Value) {
+    let Some((segment, rest)) = path.split_first() else {
+        *slot = value;
         return;
     };
-
-    if let Some(index) = index {
-        values.resize(index + 1, serde_json::Value::Null);
-        values[index] = value;
+    if segment.is_empty() || segment.parse::<usize>().is_ok() {
+        if slot.is_null() {
+            *slot = serde_json::Value::Array(Vec::new());
+        }
+        let serde_json::Value::Array(values) = slot else {
+            return;
+        };
+        let index = segment.parse().unwrap_or(values.len());
+        if values.len() <= index {
+            values.resize(index + 1, serde_json::Value::Null);
+        }
+        insert_at_path(&mut values[index], rest, value);
     } else {
-        values.push(value);
+        if slot.is_null() {
+            *slot = serde_json::Value::Object(serde_json::Map::new());
+        }
+        let serde_json::Value::Object(fields) = slot else {
+            return;
+        };
+        let child = fields
+            .entry(segment.to_string())
+            .or_insert(serde_json::Value::Null);
+        insert_at_path(child, rest, value);
     }
 }
 
+/// Splits a bracketed field name such as `links[0][entity_id]` into its base
+/// name and segments. Returns `None` for plain or malformed names.
 #[cfg(feature = "multipart")]
-fn multipart_array_field(field_name: &str) -> Option<(&str, Option<usize>)> {
-    let (name, index) = field_name.rsplit_once('[')?;
-    let index = index.strip_suffix(']')?;
+fn multipart_field_path(field_name: &str) -> Option<(&str, Vec<&str>)> {
+    let (name, mut rest) = field_name.split_once('[')?;
     if name.is_empty() {
         return None;
     }
-    if index.is_empty() {
-        return Some((name, None));
+    let mut path = Vec::new();
+    loop {
+        let (segment, after) = rest.split_once(']')?;
+        path.push(segment);
+        if after.is_empty() {
+            return Some((name, path));
+        }
+        rest = after.strip_prefix('[')?;
     }
-    Some((name, Some(index.parse().ok()?)))
 }
 
 /// Rejection from [`InertiaForm`]. Renders as a `4xx` HTTP response.
