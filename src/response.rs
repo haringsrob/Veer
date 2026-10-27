@@ -6,6 +6,11 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
 
+/// Validation errors carried by a response, readable by middleware that runs
+/// inside the Inertia layer (e.g. a `route_layer`).
+#[derive(Debug, Clone)]
+pub struct ValidationErrors(pub HashMap<String, Vec<String>>);
+
 /// The mutable response builder returned by `Inertia::render`.
 pub struct InertiaResponse {
     pub(crate) component: String,

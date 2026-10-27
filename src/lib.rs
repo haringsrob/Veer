@@ -107,7 +107,7 @@ pub use inertia::Inertia;
 pub use page::PageObject;
 pub use props::{Always, Merge, Prop, ScrollMetadata};
 pub use request::RequestInfo;
-pub use response::InertiaResponse;
+pub use response::{InertiaResponse, ValidationErrors};
 pub use root_view::{
     MinimalRootView, RootView, RootViewContext, ViteManifest, ViteManifestError, ViteRootView,
 };

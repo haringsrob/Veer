@@ -22,9 +22,14 @@ impl IntoResponse for InertiaResponse {
         // by carrying it inside the response builder. The layer wraps the response
         // after the handler runs: this impl produces a placeholder, and the layer
         // finishes the work using `finalize`.
+        let errors = (!self.pending_flash.errors.is_empty())
+            .then(|| crate::response::ValidationErrors(self.pending_flash.errors.clone()));
         let marker = InertiaResponseMarker(Arc::new(Mutex::new(Some(self))));
         let mut resp = Response::new(Body::empty());
         resp.extensions_mut().insert(marker);
+        if let Some(errors) = errors {
+            resp.extensions_mut().insert(errors);
+        }
         resp
     }
 }

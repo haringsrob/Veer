@@ -239,3 +239,43 @@ async fn shared_lazy_props_execute_only_when_requested_and_page_props_win() {
         }
     }
 }
+
+#[tokio::test]
+async fn route_layer_sees_validation_errors() {
+    use axum::{
+        extract::{Request, State},
+        middleware::Next,
+        response::Response,
+    };
+    use std::sync::{Arc, Mutex};
+    use veer::ValidationErrors;
+
+    type Seen = Arc<Mutex<Vec<String>>>;
+
+    async fn capture(State(seen): State<Seen>, request: Request, next: Next) -> Response {
+        let response = next.run(request).await;
+        if let Some(errors) = response.extensions().get::<ValidationErrors>() {
+            seen.lock().unwrap().extend(errors.0.keys().cloned());
+        }
+        response
+    }
+
+    let seen = Seen::default();
+    let app: Router = Router::new()
+        .route(
+            "/users",
+            post(|inertia: Inertia| async move {
+                inertia
+                    .with_errors(vec![("name", "is required")])
+                    .redirect("/users/new")
+            })
+            .route_layer(axum::middleware::from_fn_with_state(seen.clone(), capture)),
+        )
+        .layer(InertiaLayer::new(
+            InertiaConfig::new().version(|| "v1".into()),
+        ));
+    app.oneshot(req_inertia("POST", "/users", "v1"))
+        .await
+        .unwrap();
+    assert_eq!(*seen.lock().unwrap(), vec!["name".to_string()]);
+}
